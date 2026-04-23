@@ -1938,62 +1938,79 @@ RegisterNUICallback('validGiveItem', function(data, cb)
 	cb(1)
 	giveItemToTarget(data.player, data.slot, data.count)
 end)
+
 RegisterNUICallback('giveItem', function(data, cb)
-	cb(1)
+    cb(1)
+    local target
+    if client.giveplayerlist then
+        local nearbyPlayers = lib.getNearbyPlayers(GetEntityCoords(cache.ped), 1.5)
+        if #nearbyPlayers == 0 then return end
 
-    if usingItem then return end
-
-	if client.giveplayerlist then
-		local nearbyPlayers = lib.getNearbyPlayers(GetEntityCoords(playerPed), 3.0)
-        local nearbyCount = #nearbyPlayers
-
-		if nearbyCount == 0 then return end
-
-        if nearbyCount == 1 then
-			local option = nearbyPlayers[1]
-
-            if not isGiveTargetValid(option.ped, option.coords) then return end
-            return SendGiveUI({playerlist = {GetPlayerServerId(option.id)}, slot = data.slot, count = data.count})
+        local selected = false
+        for i = 1, #nearbyPlayers do
+            local option = nearbyPlayers[i]
+            local playerName = GetPlayerName(option.id)
+            option.id = GetPlayerServerId(option.id)
+            option.label = ('[%s] %s'):format(option.id, playerName)
+            nearbyPlayers[i] = {
+                title = option.label,
+                onSelect = function()
+                    target = option.id
+                    selected = true
+                end
+            }
         end
 
-        local giveList, n = {}, 0
+        lib.registerContext({
+            id = 'ox_inventory:givePlayerList',
+            title = 'Give item',
+            options = nearbyPlayers,
+            onClose = function()
+                selected = true
+            end
+        })
+        lib.showContext('ox_inventory:givePlayerList')
 
-		for i = 1, #nearbyPlayers do
-			local option = nearbyPlayers[i]
-
-            if isGiveTargetValid(option.ped, option.coords) then
-				local playerName = GetPlayerName(option.id)
-				option.id = GetPlayerServerId(option.id)
-                ---@diagnostic disable-next-line: inject-field
-				option.label = ('[%s] %s'):format(option.id, playerName)
-				n += 1
-				giveList[n] = option
-			end
-		end
-
-        if n == 0 then return end
-
-		return SendGiveUI({playerlist = playerID, slot = data.slot, count = data.count})
-	end
-
-    if cache.vehicle then
-		local seats = GetVehicleMaxNumberOfPassengers(cache.vehicle) - 1
-
-		if seats >= 0 then
-			local passenger = GetPedInVehicleSeat(cache.vehicle, cache.seat - 2 * (cache.seat % 2) + 1)
-
-			if passenger ~= 0 and IsEntityVisible(passenger) then
-                return giveItemToTarget(GetPlayerServerId(NetworkGetPlayerIndexFromPed(passenger)), data.slot, data.count)
-			end
-		end
-
-        return
-	end
-
-    local entity = Utils.Raycast(1|2|4|8|16, GetOffsetFromEntityInWorldCoords(cache.ped, 0.0, 3.0, 0.5), 0.2)
-
-    if entity and IsPedAPlayer(entity) and IsEntityVisible(entity) and #(GetEntityCoords(playerPed, true) - GetEntityCoords(entity, true)) < 3.0 then
-		return SendGiveUI({playerlist = {GetPlayerServerId(NetworkGetPlayerIndexFromPed(entity))}, slot = data.slot, count = data.count})
+        -- Timeout 10 detik untuk mencegah infinite loop
+        local timeout = 0
+        while not selected and timeout < 100 do
+            Wait(100)
+            timeout = timeout + 1
+        end
+    elseif cache.vehicle then
+        local seats = GetVehicleMaxNumberOfPassengers(cache.vehicle) - 1
+        if seats >= 0 then
+            local adjacentSeat
+            if cache.seat == -1 then
+                adjacentSeat = 0
+            elseif cache.seat == 0 then
+                adjacentSeat = -1
+            else
+                adjacentSeat = cache.seat % 2 == 1 and cache.seat + 1 or cache.seat - 1
+            end
+            local passenger = GetPedInVehicleSeat(cache.vehicle, adjacentSeat)
+            if passenger and passenger ~= 0 then
+                local playerIdx = NetworkGetPlayerIndexFromPed(passenger)
+                if playerIdx and playerIdx ~= -1 then
+                    target = GetPlayerServerId(playerIdx)
+                end
+            end
+        end
+    else
+        local entity = Utils.Raycast(12)
+        if entity and IsPedAPlayer(entity) and #(GetEntityCoords(cache.ped, true) - GetEntityCoords(entity, true)) < 2.0 then
+            local playerIdx = NetworkGetPlayerIndexFromPed(entity)
+            if playerIdx and playerIdx ~= -1 then
+                target = GetPlayerServerId(playerIdx)
+                Utils.PlayAnim(2000, 'mp_common', 'givetake1_a', 1.0, 1.0, -1, 50, 0.0, 0, 0, 0)
+            end
+        end
+    end
+    if target then
+        TriggerServerEvent('ox_inventory:giveItem', data.slot, target, data.count)
+        if currentWeapon and data.slot == currentWeapon.slot then
+            currentWeapon = Utils.Disarm(currentWeapon)
+        end
     end
 end)
 
